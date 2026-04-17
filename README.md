@@ -9,6 +9,7 @@
 - Optionally fails the check if the score drops below your threshold
 - Links to the full interactive report on vibedrift.ai
 
+TEST
 ## Quick setup
 
 ```yaml
