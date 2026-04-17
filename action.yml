@@ -1,0 +1,48 @@
+name: "VibeDrift — Drift Detection"
+description: "Run VibeDrift on every PR. Posts a comment with score delta + new drifts. Fails the check if the score drops below your threshold."
+author: "VibeDrift (vibedrift.ai)"
+
+branding:
+  icon: "shield"
+  color: "yellow"
+
+inputs:
+  token:
+    description: "VibeDrift API token (from vibedrift.ai/dashboard → Settings)"
+    required: true
+  path:
+    description: "Path to the project directory to scan"
+    required: false
+    default: "."
+  fail-on-score:
+    description: "Fail the check if the composite score drops below this threshold (0-100)"
+    required: false
+    default: ""
+  deep:
+    description: "Run AI-powered deep scan (uses deep scan budget)"
+    required: false
+    default: "false"
+  comment:
+    description: "Post a PR comment with the drift report"
+    required: false
+    default: "true"
+  comment-on-pass:
+    description: "Post a comment even when the score is above the threshold"
+    required: false
+    default: "true"
+
+outputs:
+  score:
+    description: "Composite drift score (0-100)"
+  grade:
+    description: "Letter grade (A-F)"
+  finding-count:
+    description: "Total number of findings"
+  delta:
+    description: "Score change vs baseline (e.g. -3). Empty if no baseline."
+  report-url:
+    description: "Dashboard URL for the full report"
+
+runs:
+  using: "node20"
+  main: "dist/index.js"
