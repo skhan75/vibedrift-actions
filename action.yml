@@ -48,8 +48,11 @@ runs:
       run: |
         echo "::group::VibeDrift Scan"
 
-        # Run the scan — capture JSON stdout, let stderr flow for logging
-        RESULT=$(npx -y @vibedrift/cli "$SCAN_PATH" --json --no-cache $DEEP_FLAG 2>&1 | tee /dev/stderr | grep '^{' | head -1) || true
+        # Install CLI globally — more reliable than npx in CI
+        npm install -g @vibedrift/cli@latest 2>&1 | tail -3
+
+        # Run the scan — JSON to stdout, stderr for timing/logs
+        RESULT=$(node $(npm root -g)/@vibedrift/cli/dist/cli/index.js "$SCAN_PATH" --json --no-cache $DEEP_FLAG 2>/dev/null) || true
 
         if [ -z "$RESULT" ]; then
           echo "::error::VibeDrift CLI produced no JSON output. Ensure the path is correct."
