@@ -31705,7 +31705,7 @@ var exec = __nccwpck_require__(5236);
 async function runScan(path, token, deep) {
     let stdout = "";
     let stderr = "";
-    const args = ["@vibedrift/cli", path, "--json", "--no-cache"];
+    const args = ["-y", "@vibedrift/cli", path, "--json", "--no-cache"];
     if (deep)
         args.push("--deep");
     const exitCode = await exec.exec("npx", args, {

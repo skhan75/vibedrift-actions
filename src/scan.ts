@@ -14,7 +14,7 @@ export async function runScan(
   let stdout = "";
   let stderr = "";
 
-  const args = ["@vibedrift/cli", path, "--json", "--no-cache"];
+  const args = ["-y", "@vibedrift/cli", path, "--json", "--no-cache"];
   if (deep) args.push("--deep");
 
   const exitCode = await exec.exec("npx", args, {
