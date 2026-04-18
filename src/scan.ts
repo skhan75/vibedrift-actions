@@ -2,7 +2,7 @@
  * Run VibeDrift CLI and parse the JSON output.
  */
 
-import * as exec from "@actions/exec";
+import { execSync } from "child_process";
 import * as core from "@actions/core";
 import type { ScanResult } from "./types.js";
 
@@ -11,32 +11,27 @@ export async function runScan(
   token: string,
   deep: boolean,
 ): Promise<{ result: ScanResult; projectHash: string; scanId: string | null }> {
-  let stdout = "";
-  let stderr = "";
+  const deepFlag = deep ? " --deep" : "";
+  const cmd = `npx -y @vibedrift/cli ${path} --json --no-cache${deepFlag}`;
+  core.info(`Running: ${cmd}`);
 
-  const args = ["-y", "@vibedrift/cli", path, "--json", "--no-cache"];
-  if (deep) args.push("--deep");
-
-  const exitCode = await exec.exec("npx", args, {
-    env: {
-      ...process.env,
-      VIBEDRIFT_TOKEN: token,
-    },
-    silent: true,
-    listeners: {
-      stdout: (data: Buffer) => {
-        stdout += data.toString();
-      },
-      stderr: (data: Buffer) => {
-        stderr += data.toString();
-      },
-    },
-    ignoreReturnCode: true,
-  });
-
-  // Log stderr for debugging (scan timing, verbose output)
-  if (stderr.trim()) {
-    core.debug(`CLI stderr:\n${stderr}`);
+  let stdout: string;
+  let exitCode = 0;
+  try {
+    const buf = execSync(cmd, {
+      env: { ...process.env, VIBEDRIFT_TOKEN: token },
+      maxBuffer: 50 * 1024 * 1024,
+      timeout: 300_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    stdout = buf.toString();
+  } catch (err: any) {
+    exitCode = err.status ?? 1;
+    stdout = err.stdout?.toString() ?? "";
+    const stderr = err.stderr?.toString() ?? "";
+    if (stderr.trim()) {
+      core.debug(`CLI stderr:\n${stderr}`);
+    }
   }
 
   // Parse JSON from stdout

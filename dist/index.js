@@ -31694,8 +31694,8 @@ var __webpack_exports__ = {};
 var core = __nccwpck_require__(7484);
 // EXTERNAL MODULE: ./node_modules/@actions/github/lib/github.js
 var github = __nccwpck_require__(3228);
-// EXTERNAL MODULE: ./node_modules/@actions/exec/lib/exec.js
-var exec = __nccwpck_require__(5236);
+// EXTERNAL MODULE: external "child_process"
+var external_child_process_ = __nccwpck_require__(5317);
 ;// CONCATENATED MODULE: ./src/scan.ts
 /**
  * Run VibeDrift CLI and parse the JSON output.
@@ -31703,30 +31703,27 @@ var exec = __nccwpck_require__(5236);
 
 
 async function runScan(path, token, deep) {
-    let stdout = "";
-    let stderr = "";
-    const args = ["-y", "@vibedrift/cli", path, "--json", "--no-cache"];
-    if (deep)
-        args.push("--deep");
-    const exitCode = await exec.exec("npx", args, {
-        env: {
-            ...process.env,
-            VIBEDRIFT_TOKEN: token,
-        },
-        silent: true,
-        listeners: {
-            stdout: (data) => {
-                stdout += data.toString();
-            },
-            stderr: (data) => {
-                stderr += data.toString();
-            },
-        },
-        ignoreReturnCode: true,
-    });
-    // Log stderr for debugging (scan timing, verbose output)
-    if (stderr.trim()) {
-        core.debug(`CLI stderr:\n${stderr}`);
+    const deepFlag = deep ? " --deep" : "";
+    const cmd = `npx -y @vibedrift/cli ${path} --json --no-cache${deepFlag}`;
+    core.info(`Running: ${cmd}`);
+    let stdout;
+    let exitCode = 0;
+    try {
+        const buf = (0,external_child_process_.execSync)(cmd, {
+            env: { ...process.env, VIBEDRIFT_TOKEN: token },
+            maxBuffer: 50 * 1024 * 1024,
+            timeout: 300_000,
+            stdio: ["pipe", "pipe", "pipe"],
+        });
+        stdout = buf.toString();
+    }
+    catch (err) {
+        exitCode = err.status ?? 1;
+        stdout = err.stdout?.toString() ?? "";
+        const stderr = err.stderr?.toString() ?? "";
+        if (stderr.trim()) {
+            core.debug(`CLI stderr:\n${stderr}`);
+        }
     }
     // Parse JSON from stdout
     let result;
