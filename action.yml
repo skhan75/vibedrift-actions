@@ -22,27 +22,115 @@ inputs:
     description: "Run AI-powered deep scan (uses deep scan budget)"
     required: false
     default: "false"
-  comment:
-    description: "Post a PR comment with the drift report"
-    required: false
-    default: "true"
-  comment-on-pass:
-    description: "Post a comment even when the score is above the threshold"
-    required: false
-    default: "true"
 
 outputs:
   score:
     description: "Composite drift score (0-100)"
+    value: ${{ steps.scan.outputs.score }}
   grade:
     description: "Letter grade (A-F)"
+    value: ${{ steps.scan.outputs.grade }}
   finding-count:
     description: "Total number of findings"
-  delta:
-    description: "Score change vs baseline (e.g. -3). Empty if no baseline."
-  report-url:
-    description: "Dashboard URL for the full report"
+    value: ${{ steps.scan.outputs.finding_count }}
 
 runs:
-  using: "node20"
-  main: "dist/index.js"
+  using: "composite"
+  steps:
+    - name: Install and run VibeDrift
+      id: scan
+      shell: bash
+      env:
+        VIBEDRIFT_TOKEN: ${{ inputs.token }}
+        SCAN_PATH: ${{ inputs.path }}
+        DEEP_FLAG: ${{ inputs.deep == 'true' && '--deep' || '' }}
+        FAIL_SCORE: ${{ inputs.fail-on-score }}
+      run: |
+        echo "::group::VibeDrift Scan"
+
+        # Run the scan — capture JSON stdout, let stderr flow for logging
+        RESULT=$(npx -y @vibedrift/cli "$SCAN_PATH" --json --no-cache $DEEP_FLAG 2>&1 | tee /dev/stderr | grep '^{' | head -1) || true
+
+        if [ -z "$RESULT" ]; then
+          echo "::error::VibeDrift CLI produced no JSON output. Ensure the path is correct."
+          exit 1
+        fi
+
+        # Extract metrics
+        SCORE=$(echo "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('compositeScore',0))" 2>/dev/null || echo "0")
+        MAX=$(echo "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('maxCompositeScore',100))" 2>/dev/null || echo "100")
+        FINDINGS=$(echo "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('findings',[])))" 2>/dev/null || echo "0")
+
+        # Grade
+        PCT=$(python3 -c "print(round(float('$SCORE') / max(float('$MAX'), 1) * 100, 1))")
+        GRADE=$(python3 -c "
+        p=$PCT
+        print('A' if p>=90 else 'B' if p>=75 else 'C' if p>=50 else 'D' if p>=25 else 'F')
+        ")
+
+        echo "Score: $SCORE/$MAX ($GRADE) · $FINDINGS findings"
+
+        # Outputs
+        echo "score=$SCORE" >> $GITHUB_OUTPUT
+        echo "grade=$GRADE" >> $GITHUB_OUTPUT
+        echo "finding_count=$FINDINGS" >> $GITHUB_OUTPUT
+
+        echo "::endgroup::"
+
+        # Job summary
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## VibeDrift Scan
+        **Score:** $SCORE/$MAX (**$GRADE**)
+        **Findings:** $FINDINGS
+
+        _Run locally: \`npx @vibedrift/cli .\` · [vibedrift.ai](https://vibedrift.ai)_
+        EOF
+
+        # Fail threshold
+        if [ -n "$FAIL_SCORE" ]; then
+          BELOW=$(python3 -c "print('yes' if float('$SCORE') < float('$FAIL_SCORE') else 'no')")
+          if [ "$BELOW" = "yes" ]; then
+            echo "::error::VibeDrift: score $SCORE is below threshold $FAIL_SCORE"
+            exit 1
+          fi
+        fi
+
+    - name: Post PR comment
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SCORE: ${{ steps.scan.outputs.score }}
+        GRADE: ${{ steps.scan.outputs.grade }}
+        FINDINGS: ${{ steps.scan.outputs.finding_count }}
+      run: |
+        PR_NUMBER=${{ github.event.pull_request.number }}
+        REPO=${{ github.repository }}
+
+        read -r -d '' BODY << 'COMMENT' || true
+        <!-- vibedrift-pr-comment -->
+        ## VibeDrift — Drift Report
+
+        | Metric | Value |
+        |---|---|
+        | **Score** | SCORE_PH/100 (**GRADE_PH**) |
+        | **Findings** | FINDINGS_PH |
+
+        ---
+        _[vibedrift.ai](https://vibedrift.ai) · Run locally: `npx @vibedrift/cli .`_
+        COMMENT
+
+        BODY="${BODY//SCORE_PH/$SCORE}"
+        BODY="${BODY//GRADE_PH/$GRADE}"
+        BODY="${BODY//FINDINGS_PH/$FINDINGS}"
+
+        # Find existing comment
+        EXISTING=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | contains("vibedrift-pr-comment")) | .id' 2>/dev/null | head -1)
+
+        if [ -n "$EXISTING" ]; then
+          gh api "repos/$REPO/issues/comments/$EXISTING" -X PATCH -f body="$BODY" > /dev/null 2>&1
+          echo "Updated existing PR comment"
+        else
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$BODY" > /dev/null 2>&1
+          echo "Posted new PR comment"
+        fi
