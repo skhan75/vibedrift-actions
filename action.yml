@@ -51,8 +51,14 @@ runs:
         # Install CLI globally — more reliable than npx in CI
         npm install -g @vibedrift/cli@latest 2>&1 | tail -3
 
-        # Run the scan — JSON to stdout, stderr for timing/logs
-        RESULT=$(node $(npm root -g)/@vibedrift/cli/dist/cli/index.js "$SCAN_PATH" --json --no-cache $DEEP_FLAG 2>/dev/null) || true
+        # Run the scan — JSON to stdout, stderr captured for scan ID extraction
+        STDERR_FILE=$(mktemp)
+        RESULT=$(node $(npm root -g)/@vibedrift/cli/dist/cli/index.js "$SCAN_PATH" --json --no-cache --verbose $DEEP_FLAG 2>"$STDERR_FILE") || true
+
+        # Extract scan ID from stderr (e.g. "[scan-log] Logged scan 8dce95e2")
+        SCAN_ID=$(grep -oP 'Logged scan \K[a-f0-9-]+' "$STDERR_FILE" 2>/dev/null | head -1)
+        cat "$STDERR_FILE" >&2
+        rm -f "$STDERR_FILE"
 
         if [ -z "$RESULT" ]; then
           echo "::error::VibeDrift CLI produced no JSON output. Ensure the path is correct."
@@ -77,17 +83,27 @@ runs:
         echo "score=$SCORE" >> $GITHUB_OUTPUT
         echo "grade=$GRADE" >> $GITHUB_OUTPUT
         echo "finding_count=$FINDINGS" >> $GITHUB_OUTPUT
+        echo "scan_id=$SCAN_ID" >> $GITHUB_OUTPUT
+
+        # Build report URL
+        REPORT_URL=""
+        if [ -n "$SCAN_ID" ]; then
+          REPORT_URL="https://vibedrift.ai/dashboard/scans/$SCAN_ID"
+          echo "Full report: $REPORT_URL"
+        fi
 
         echo "::endgroup::"
 
         # Job summary
-        cat >> $GITHUB_STEP_SUMMARY << EOF
-        ## VibeDrift Scan
-        **Score:** $SCORE/$MAX (**$GRADE**)
-        **Findings:** $FINDINGS
-
-        _Run locally: \`npx @vibedrift/cli .\` · [vibedrift.ai](https://vibedrift.ai)_
-        EOF
+        echo "## VibeDrift Scan" >> $GITHUB_STEP_SUMMARY
+        echo "**Score:** $SCORE/$MAX (**$GRADE**)" >> $GITHUB_STEP_SUMMARY
+        echo "**Findings:** $FINDINGS" >> $GITHUB_STEP_SUMMARY
+        if [ -n "$REPORT_URL" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[$REPORT_URL]($REPORT_URL)" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "_Run locally: \`npx @vibedrift/cli .\` · [vibedrift.ai](https://vibedrift.ai)_" >> $GITHUB_STEP_SUMMARY
 
         # Fail threshold
         if [ -n "$FAIL_SCORE" ]; then
@@ -106,9 +122,15 @@ runs:
         SCORE: ${{ steps.scan.outputs.score }}
         GRADE: ${{ steps.scan.outputs.grade }}
         FINDINGS: ${{ steps.scan.outputs.finding_count }}
+        SCAN_ID: ${{ steps.scan.outputs.scan_id }}
       run: |
         PR_NUMBER=${{ github.event.pull_request.number }}
         REPO=${{ github.repository }}
+
+        REPORT_LINK=""
+        if [ -n "$SCAN_ID" ]; then
+          REPORT_LINK="[View full report →](https://vibedrift.ai/dashboard/scans/$SCAN_ID)"
+        fi
 
         read -r -d '' BODY << 'COMMENT' || true
         <!-- vibedrift-pr-comment -->
@@ -119,6 +141,8 @@ runs:
         | **Score** | SCORE_PH/100 (**GRADE_PH**) |
         | **Findings** | FINDINGS_PH |
 
+        REPORT_LINK_PH
+
         ---
         _[vibedrift.ai](https://vibedrift.ai) · Run locally: `npx @vibedrift/cli .`_
         COMMENT
@@ -126,6 +150,7 @@ runs:
         BODY="${BODY//SCORE_PH/$SCORE}"
         BODY="${BODY//GRADE_PH/$GRADE}"
         BODY="${BODY//FINDINGS_PH/$FINDINGS}"
+        BODY="${BODY//REPORT_LINK_PH/$REPORT_LINK}"
 
         # Find existing comment
         EXISTING=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | contains("vibedrift-pr-comment")) | .id' 2>/dev/null | head -1)
