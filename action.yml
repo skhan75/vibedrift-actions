@@ -55,8 +55,10 @@ runs:
         STDERR_FILE=$(mktemp)
         RESULT=$(node $(npm root -g)/@vibedrift/cli/dist/cli/index.js "$SCAN_PATH" --json --no-cache --verbose $DEEP_FLAG 2>"$STDERR_FILE") || true
 
-        # Extract scan ID from stderr (e.g. "[scan-log] Logged scan 8dce95e2")
-        SCAN_ID=$(grep -oP 'Logged scan \K[a-f0-9-]+' "$STDERR_FILE" 2>/dev/null | head -1)
+        # Extract scan ID from stderr (e.g. "[scan-log] Logged scan 8dce95e2").
+        # `|| true` so a no-match grep (unauthenticated run logs no scan) can't
+        # abort the step under `set -e -o pipefail` before the score is checked.
+        SCAN_ID=$(grep -oP 'Logged scan \K[a-f0-9-]+' "$STDERR_FILE" 2>/dev/null | head -1 || true)
         cat "$STDERR_FILE" >&2
         rm -f "$STDERR_FILE"
 
